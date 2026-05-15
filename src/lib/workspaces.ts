@@ -173,6 +173,33 @@ export class WorkspaceManager {
 
     return workspace
   }
+
+  /**
+   * Retrieve token from OS keychain for a workspace.
+   * Returns token or undefined if not found.
+   */
+  async getToken(workspace: WorkspaceConfig): Promise<string | undefined> {
+    try {
+      const keytar = await import('keytar')
+      const token = await keytar.getPassword('slak', workspace.tokenLabel)
+      return token || undefined
+    } catch {
+      // Keytar unavailable or token not found
+      return undefined
+    }
+  }
+
+  /**
+   * Delete token from OS keychain for a workspace.
+   */
+  async deleteToken(workspace: WorkspaceConfig): Promise<void> {
+    try {
+      const keytar = await import('keytar')
+      await keytar.deletePassword('slak', workspace.tokenLabel)
+    } catch {
+      // Keytar unavailable or already deleted
+    }
+  }
 }
 
 /**

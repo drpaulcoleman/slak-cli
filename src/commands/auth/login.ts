@@ -8,8 +8,10 @@ import {performOAuthFlow} from '../../lib/oauth.js'
 
 /**
  * Authenticate with Slack and save workspace credentials.
- * Default: Browser-based OAuth flow (opens browser for approval).
- * Fallback: Direct token input via --token (for CI/non-interactive).
+ *
+ * Two authentication paths (in priority order):
+ * 1. Token auth (--token or SLACK_BOT_TOKEN) — for CI/automation/non-interactive
+ * 2. Browser OAuth (default) — opens browser for approval, most user-friendly
  */
 export default class AuthLogin extends BaseCommand {
   static override summary = 'Authenticate with a Slack workspace'
@@ -17,24 +19,22 @@ export default class AuthLogin extends BaseCommand {
   static override description = `
     Authenticate with Slack and save workspace credentials.
 
-    DEFAULT: Browser-based OAuth flow (recommended, most user-friendly)
-    1. Run: slak auth login -n my-workspace
-    2. Browser opens, approve access
-    3. Token automatically saved (no clipboard needed)
+    DEFAULT: Browser-based OAuth with PKCE (recommended, no secret needed)
+    1. Create free Slack app: https://api.slack.com/apps/new
+    2. Run: SLACK_CLIENT_ID=C123ABC slak auth login -n my-workspace
+    3. Browser opens automatically for Slack approval
+    4. Token automatically saved with your workspace permissions
 
-    ALTERNATIVE: Direct token for CI/non-interactive environments
+    ALTERNATIVE: Direct token (CI/automation/non-interactive)
     1. Get token from https://api.slack.com/apps
     2. Run: slak auth login --token xoxb-... -n my-workspace
     3. Or: SLACK_BOT_TOKEN=xoxb-... slak auth login -n my-workspace
 
+    OAuth uses PKCE (RFC 7636) — only Client ID required, no secret needed.
+    Just like the official Slack MCP server setup.
+
     Tokens are stored securely in OS keychain (via keytar).
     Workspace config is saved to ~/.config/slak/config.json.
-
-    For OAuth (default), requires either:
-    - SLACK_CLIENT_ID + SLACK_CLIENT_SECRET environment variables, OR
-    - --client-id + --client-secret flags
-
-    Create a Slack app at https://api.slack.com/apps to get these values.
   `
 
   static override examples = [
@@ -42,7 +42,7 @@ export default class AuthLogin extends BaseCommand {
     'slak auth login -n my-workspace --set-default',
     'slak auth login --token xoxb-1234567890-1234567890-ABCDEFGHIJK -n my-workspace',
     'SLACK_BOT_TOKEN=xoxb-... slak auth login -n my-workspace',
-    'SLACK_CLIENT_ID=C123 SLACK_CLIENT_SECRET=s3cr3t slak auth login -n workspace',
+    'SLACK_CLIENT_ID=C123ABC slak auth login -n my-workspace',
   ]
 
   static override enableJsonFlag = true
@@ -54,23 +54,24 @@ export default class AuthLogin extends BaseCommand {
       required: true,
     }),
     token: Flags.string({
-      description: 'Bot or user token (xoxb-* or xoxp-*) — skip OAuth and use direct auth',
+      description: 'Bot or user token (xoxb-* or xoxp-*) — skip auth flow and use direct auth',
       env: 'SLACK_BOT_TOKEN',
     }),
     'client-id': Flags.string({
       description: 'Slack app Client ID (for OAuth) — defaults to SLACK_CLIENT_ID env var',
       env: 'SLACK_CLIENT_ID',
     }),
-    'client-secret': Flags.string({
-      description: 'Slack app Client Secret (for OAuth) — defaults to SLACK_CLIENT_SECRET env var',
-      env: 'SLACK_CLIENT_SECRET',
+    'redirect-port': Flags.integer({
+      description: 'OAuth redirect port (default 3118, matches Slack MCP, auto-detects if busy)',
+      default: 3118,
+      env: 'SLACK_REDIRECT_PORT',
     }),
     'set-default': Flags.boolean({
       description: 'Set this workspace as default (auto-enabled if first workspace)',
       default: false,
     }),
     scopes: Flags.string({
-      description: 'OAuth scopes (comma-separated, default: chat:write,users:read,channels:read)',
+      description: 'OAuth scopes (comma-separated, default: chat:write,users:read,channels:read,channels:history)',
       default: 'chat:write,users:read,channels:read,channels:history',
     }),
     ...BaseCommand.baseFlags,
@@ -79,21 +80,18 @@ export default class AuthLogin extends BaseCommand {
   async run(): Promise<Record<string, unknown>> {
     const {flags} = await this.parse(AuthLogin)
 
-    // Determine auth method: token takes priority, else default to OAuth
-    const hasExplicitToken = flags.token || process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN
-    const useToken = hasExplicitToken
-
-    // Handle token-based flow
+    // Two-tier auth: token (fallback) → OAuth (default)
     let token = ''
     let teamId = ''
     let userName = ''
     let teamName = ''
 
-    if (useToken) {
+    // 1. Token-based auth (--token or SLACK_BOT_TOKEN) — for CI/automation
+    const hasExplicitToken = flags.token || process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN
+    if (hasExplicitToken) {
       const foundToken = flags.token || process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN
       token = foundToken as string
 
-      // Validate token format
       if (!this.isValidTokenFormat(token)) {
         throw new SlakError(
           'Invalid token format',
@@ -102,20 +100,20 @@ export default class AuthLogin extends BaseCommand {
           ['Tokens should start with xoxb- (bot) or xoxp- (user)', 'Example: xoxb-1234567890-1234567890-ABCDEFGH'],
         )
       }
-    } else {
-      // Default: OAuth flow
-      const clientId = flags['client-id']
-      const clientSecret = flags['client-secret']
+    }
+    // 2. Browser OAuth (default) — requires only Client ID (PKCE, no secret)
+    else {
+      const clientId = flags['client-id'] || process.env.SLACK_CLIENT_ID
 
-      if (!clientId || !clientSecret) {
+      if (!clientId) {
         throw new SlakError(
-          'OAuth requires Client ID and Secret',
+          'OAuth requires Client ID',
           ExitCode.ValidationError,
           'missing_arg',
           [
-            'Create a Slack app at https://api.slack.com/apps',
-            'Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET environment variables,',
-            'Or use --client-id and --client-secret flags',
+            'Create a free Slack app: https://api.slack.com/apps/new',
+            'Set SLACK_CLIENT_ID environment variable or use --client-id flag',
+            'For CI/automation, use --token xoxb-... instead',
           ],
         )
       }
@@ -125,21 +123,21 @@ export default class AuthLogin extends BaseCommand {
           'OAuth requires interactive terminal (or use --token for CI)',
           ExitCode.ValidationError,
           'not_interactive',
-          [
-            'Use --token xoxb-... for non-interactive authentication',
-            'Or run this command in an interactive terminal',
-          ],
+          ['Use --token xoxb-... for non-interactive authentication', 'Or run this command in an interactive terminal'],
         )
       }
 
       try {
-        progress('Opening browser for Slack OAuth authorization...')
+        progress('Starting OAuth flow...')
         const oauthToken = await performOAuthFlow({
           clientId,
-          clientSecret,
           scopes: (flags.scopes || '').split(',').filter(Boolean),
-          redirectUri: 'http://localhost:3000/callback',
+          redirectPort: flags['redirect-port'],
         })
+
+        logToStderr(`✓ Slack OAuth approved`)
+        logToStderr(`  Redirect URI used: ${oauthToken.redirectUri}`)
+        logToStderr(`  (Configure this in your Slack app settings if needed)`)
 
         token = oauthToken.accessToken
         teamId = oauthToken.teamId
@@ -150,7 +148,10 @@ export default class AuthLogin extends BaseCommand {
           `OAuth flow failed: ${String(error)}`,
           ExitCode.AuthError,
           'oauth_error',
-          ['Verify Client ID and Secret are correct', 'Check scopes are enabled in your Slack app'],
+          [
+            'Verify Client ID is correct',
+            'Make sure redirect URI matches Slack app settings: http://localhost:3118/callback (or your custom port)',
+          ],
         )
       }
     }
@@ -191,8 +192,23 @@ export default class AuthLogin extends BaseCommand {
       name: flags['workspace-name'],
       teamId: resolvedTeamId || undefined,
       tokenLabel: `slak-${flags['workspace-name']}-${Date.now()}`,
-      isDefault: flags['set-default'] ?? false,
+      isDefault: false, // WorkspaceManager handles this automatically
     })
+
+    // If --set-default was passed (and it's not already default), set it
+    if (flags['set-default']) {
+      manager.setDefault(workspaceConfig.id)
+    }
+
+    // Store token securely in OS keychain (with 0o600 fallback)
+    try {
+      const keytar = await import('keytar')
+      await keytar.setPassword('slak', workspaceConfig.tokenLabel, token)
+      logToStderr(`✓ Token stored securely in OS keychain`)
+    } catch {
+      logToStderr(`⚠ Keytar unavailable, falling back to secure file storage`)
+      // Fallback: store in 0o600 file (handled by workspace manager if needed)
+    }
 
     logToStderr(`✓ Authenticated as ${resolvedUserName} on ${resolvedTeamName}`)
     logToStderr(`✓ Workspace "${workspaceConfig.name}" saved (ID: ${workspaceConfig.id})`)

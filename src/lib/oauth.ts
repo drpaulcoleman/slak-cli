@@ -1,18 +1,22 @@
 import {createServer, Server} from 'http'
 import {URL} from 'url'
+import {createHash, randomBytes} from 'crypto'
+import {setTimeout as setTimeoutNode, clearTimeout as clearTimeoutNode} from 'node:timers'
 import open from 'open'
 import {WebClient} from '@slack/web-api'
 
 export interface OAuthConfig {
   clientId: string
-  clientSecret?: string
   scopes: string[]
-  redirectUri: string
+  redirectUri?: string
+  redirectPort?: number
 }
 
 export interface OAuthFlowResult {
   authUrl: string
   redirectServer: Server
+  codeVerifier: string
+  redirectUri: string
   shutdown: () => Promise<void>
 }
 
@@ -26,8 +30,20 @@ export interface OAuthToken {
 }
 
 /**
- * Initiates OAuth flow: starts redirect server, builds auth URL, opens browser.
- * Returns auth URL and server handle; caller awaits code capture.
+ * Generate PKCE code verifier and challenge.
+ * RFC 7636: code_verifier is 43-128 chars, code_challenge = BASE64URL(SHA256(verifier))
+ */
+function generatePKCE(): {verifier: string; challenge: string} {
+  const verifier = randomBytes(32).toString('base64url')
+  const challenge = createHash('sha256').update(verifier).digest('base64url')
+  return {verifier, challenge}
+}
+
+/**
+ * Initiates OAuth flow with PKCE: starts redirect server, builds auth URL, opens browser.
+ * Returns auth URL, code verifier, actual redirect URI, and server handle.
+ * Supports configurable port with auto-detection if port is busy.
+ * Uses PKCE (RFC 7636) — no Client Secret required (like official Slack MCP server).
  */
 export async function initiateOAuthFlow(config: OAuthConfig): Promise<OAuthFlowResult> {
   if (!config.clientId) {
@@ -38,15 +54,29 @@ export async function initiateOAuthFlow(config: OAuthConfig): Promise<OAuthFlowR
     throw new Error('At least one scope required for OAuth flow')
   }
 
-  // Build auth URL
+  // Determine redirect port (with auto-detection if needed)
+  let redirectPort: number
+  if (config.redirectUri) {
+    const redirectUrl = new URL(config.redirectUri)
+    redirectPort = parseInt(redirectUrl.port || '3000', 10)
+  } else {
+    // Auto-detect available port starting from preferred port
+    const {findAvailablePort} = await import('./port.js')
+    redirectPort = await findAvailablePort(config.redirectPort || 3000)
+  }
+
+  const redirectUri = `http://localhost:${redirectPort}/callback`
+
+  // Generate PKCE challenge
+  const {verifier, challenge} = generatePKCE()
+
+  // Build auth URL with PKCE
   const url = new URL('https://slack.com/oauth')
   url.searchParams.set('client_id', config.clientId)
   url.searchParams.set('scope', config.scopes.join(','))
-  url.searchParams.set('redirect_uri', config.redirectUri)
-
-  // Parse redirect port from URI
-  const redirectUrl = new URL(config.redirectUri)
-  const redirectPort = parseInt(redirectUrl.port || '3000', 10)
+  url.searchParams.set('redirect_uri', redirectUri)
+  url.searchParams.set('code_challenge', challenge)
+  url.searchParams.set('code_challenge_method', 'S256')
 
   // Start redirect server
   const redirectServer = await startRedirectServer(redirectPort)
@@ -54,6 +84,8 @@ export async function initiateOAuthFlow(config: OAuthConfig): Promise<OAuthFlowR
   return {
     authUrl: url.toString(),
     redirectServer,
+    codeVerifier: verifier,
+    redirectUri,
     shutdown: () => closeServer(redirectServer),
   }
 }
@@ -67,13 +99,13 @@ export async function waitForAuthCode(
   timeoutMs: number = 300000, // 5 minutes default
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    const timeout = setTimeoutNode(() => {
       reject(new Error('OAuth authorization timed out (5 minutes)'))
     }, timeoutMs)
 
     // Attach handler to server's request event
     const handler = (req: any) => {
-      clearTimeout(timeout)
+      clearTimeoutNode(timeout)
       const url = new URL(req.url!, 'http://localhost')
       const code = url.searchParams.get('code')
       const error = url.searchParams.get('error')
@@ -93,25 +125,23 @@ export async function waitForAuthCode(
 
 /**
  * Exchange authorization code for access token via Slack OAuth API.
- * Requires clientSecret for web app flow.
+ * Uses PKCE (code_verifier) instead of client_secret for authentication.
  */
 export async function exchangeCodeForToken(
   code: string,
-  config: OAuthConfig,
+  codeVerifier: string,
+  clientId: string,
+  redirectUri: string,
 ): Promise<OAuthToken> {
-  if (!config.clientSecret) {
-    throw new Error('Client secret required for OAuth token exchange')
-  }
-
   const client = new WebClient()
 
   try {
     const response = (await client.oauth.v2.access({
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
+      client_id: clientId,
       code,
-      redirect_uri: config.redirectUri,
-    })) as any
+      redirect_uri: redirectUri,
+      code_verifier: codeVerifier,
+    } as any)) as any
 
     if (!response.ok) {
       throw new Error(`OAuth token exchange failed: ${response.error}`)
@@ -207,11 +237,12 @@ function closeServer(server: Server): Promise<void> {
 }
 
 /**
- * Full OAuth flow: opens browser, waits for user approval, exchanges code for token.
- * Returns access token ready to use.
+ * Full OAuth flow with PKCE: opens browser, waits for user approval, exchanges code for token.
+ * Returns access token ready to use. Uses PKCE — no Client Secret required.
+ * Supports configurable redirect port with auto-detection.
  */
-export async function performOAuthFlow(config: OAuthConfig): Promise<OAuthToken> {
-  const {authUrl, redirectServer, shutdown} = await initiateOAuthFlow(config)
+export async function performOAuthFlow(config: OAuthConfig): Promise<OAuthToken & {redirectUri: string}> {
+  const {authUrl, redirectServer, codeVerifier, redirectUri, shutdown} = await initiateOAuthFlow(config)
 
   try {
     // Open browser for user to authorize
@@ -220,10 +251,13 @@ export async function performOAuthFlow(config: OAuthConfig): Promise<OAuthToken>
     // Wait for redirect with auth code
     const code = await waitForAuthCode(redirectServer)
 
-    // Exchange code for token
-    const token = await exchangeCodeForToken(code, config)
+    // Exchange code for token (using PKCE, no secret needed)
+    const token = await exchangeCodeForToken(code, codeVerifier, config.clientId, redirectUri)
 
-    return token
+    return {
+      ...token,
+      redirectUri,
+    }
   } finally {
     await shutdown()
   }

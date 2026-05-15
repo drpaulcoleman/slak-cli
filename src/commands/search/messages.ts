@@ -23,6 +23,8 @@ export default class SearchMessages extends BaseCommand {
   static override enableJsonFlag = true
 
   async run(): Promise<Record<string, unknown>> {
-    return {matches: [], total: 0}
+    const {args} = await this.parse(SearchMessages)
+    // TODO: Implement search.messages API call
+    return {matches: [], total: 0, query: args.query}
   }
 }

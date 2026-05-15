@@ -14,7 +14,7 @@ export default class ApiCommand extends BaseCommand {
     if (flags.data) {
       try {
         Object.assign(params, JSON.parse(flags.data))
-      } catch (e) {
+      } catch {
         throw new SlakError('Invalid JSON in --data', ExitCode.ValidationError, '', [])
       }
     }

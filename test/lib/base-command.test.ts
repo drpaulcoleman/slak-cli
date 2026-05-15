@@ -1,8 +1,6 @@
-import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest'
-import {runCommand} from '@oclif/test'
+import {describe, it, expect, beforeEach, afterEach} from 'vitest'
 import nock from 'nock'
 import {BaseCommand} from '../../src/lib/base-command.js'
-import {ExitCode} from '../../src/lib/errors.js'
 
 describe('BaseCommand', () => {
   beforeEach(() => {

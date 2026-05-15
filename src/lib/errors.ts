@@ -108,5 +108,5 @@ export function slackErrorToExitCode(error: string): ExitCode {
  * Redact tokens from error messages for safe logging.
  */
 export function redactToken(message: string): string {
-  return message.replace(/xox[a-z]-[A-Z0-9_\-]+/gi, 'xox*-REDACTED')
+  return message.replace(/xox[a-z]-[A-Z0-9_-]+/gi, 'xox*-REDACTED')
 }

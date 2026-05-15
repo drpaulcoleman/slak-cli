@@ -1,7 +1,8 @@
 import {Hook} from '@oclif/core'
 import inquirer from 'inquirer'
 import {findClosestCommands} from '../lib/suggest.js'
-import {isInteractive, logToStderr} from '../lib/output.js'
+import {isInteractive} from '../lib/output.js'
+import {SlakError, ExitCode} from '../lib/errors.js'
 
 /**
  * Hook: command_not_found
@@ -16,18 +17,22 @@ export const commandNotFound: Hook.CommandNotFound = async function ({id, config
 
   if (suggestions.length === 0) {
     // No close matches
-    logToStderr(`Unknown command: "${id}"`)
-    logToStderr(`Run "slak --help" for available commands.`)
-    process.exit(6) // ValidationError
-    return
+    throw new SlakError(
+      `Unknown command: "${id}"`,
+      ExitCode.ValidationError,
+      'command_not_found',
+      ['Run "slak --help" for available commands'],
+    )
   }
 
   // Non-interactive mode (AI agents, pipes, CI/CD)
   if (!isInteractive()) {
-    logToStderr(`Unknown command: "${id}"`)
-    logToStderr(`Suggestions: ${suggestions.join(', ')}`)
-    process.exit(6) // ValidationError
-    return
+    throw new SlakError(
+      `Unknown command: "${id}"`,
+      ExitCode.ValidationError,
+      'command_not_found',
+      [`Suggestions: ${suggestions.join(', ')}`],
+    )
   }
 
   // Interactive mode: prompt user for first suggestion
@@ -41,9 +46,12 @@ export const commandNotFound: Hook.CommandNotFound = async function ({id, config
   ])
 
   if (!confirmed) {
-    logToStderr(`Run "slak --help" to see available commands.`)
-    process.exit(6) // ValidationError
-    return
+    throw new SlakError(
+      `Unknown command: "${id}"`,
+      ExitCode.ValidationError,
+      'command_not_found',
+      ['Run "slak --help" to see available commands'],
+    )
   }
 
   // Re-run with corrected command

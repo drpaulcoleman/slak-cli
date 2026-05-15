@@ -1,5 +1,5 @@
 import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest'
-import {initiateOAuthFlow, exchangeCodeForToken} from '../../src/lib/oauth.js'
+import {initiateOAuthFlow} from '../../src/lib/oauth.js'
 
 describe('oauth', () => {
   beforeEach(() => {

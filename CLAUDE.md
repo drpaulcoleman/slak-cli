@@ -30,6 +30,32 @@ These are **binding constraints**, not suggestions:
 6. **Typed Exit Codes Only** — Use `ExitCode` enum from `src/lib/errors.ts`
 7. **Type-Check + Test Before Done** — Red build = incomplete task
 
+## Authentication Architecture
+
+**Two-tier auth** (matches official Slack MCP server):
+
+1. **Token auth** (--token or SLACK_BOT_TOKEN) — for CI/automation, highest priority
+   ```bash
+   slak auth login -n my-workspace --token xoxb-...
+   SLACK_BOT_TOKEN=xoxb-... slak auth login -n my-workspace
+   ```
+
+2. **Browser OAuth with PKCE** (default) — only Client ID needed, no secret
+   ```bash
+   SLACK_CLIENT_ID=C123ABC slak auth login -n my-workspace
+   slak auth login -n my-workspace --client-id C123ABC
+   ```
+
+**Redirect Port Configuration:**
+- Default: `http://localhost:3118/callback` (matches official Slack MCP pattern)
+- Auto-detects available port if 3118 is busy (tries 3119, 3120, etc.)
+- Custom port: `--redirect-port 8000` or `SLACK_REDIRECT_PORT=8000`
+- Shows actual redirect URI used, so users know what to register in Slack app settings
+
+Uses PKCE (RFC 7636) like the official Slack MCP — users only need to create a free app at api.slack.com/apps and copy the Client ID. No secrets shipped with code, no secrets exposed.
+
+**First workspace becomes default automatically** — no need for --workspace flag in single-workspace setup.
+
 ## Key Files & Architecture
 
 | File | Purpose |
