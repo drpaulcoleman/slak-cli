@@ -8,10 +8,8 @@ import {performOAuthFlow} from '../../lib/oauth.js'
 
 /**
  * Authenticate with Slack and save workspace credentials.
- * Supports three auth modes:
- * 1. --token <token>: Direct token input (for CI/non-interactive)
- * 2. --oauth: Browser-based OAuth flow (interactive, opens browser)
- * 3. SLACK_BOT_TOKEN env var: Token from environment
+ * Default: Browser-based OAuth flow (opens browser for approval).
+ * Fallback: Direct token input via --token (for CI/non-interactive).
  */
 export default class AuthLogin extends BaseCommand {
   static override summary = 'Authenticate with a Slack workspace'
@@ -19,55 +17,53 @@ export default class AuthLogin extends BaseCommand {
   static override description = `
     Authenticate with Slack and save workspace credentials.
 
-    Three authentication modes:
-    1. Direct token: --token <token> --workspace-name <name> (non-interactive)
-    2. Browser OAuth: --oauth --client-id <id> --client-secret <secret> --workspace-name <name> (interactive)
-    3. Environment var: SLACK_BOT_TOKEN or SLACK_USER_TOKEN
+    DEFAULT: Browser-based OAuth flow (recommended, most user-friendly)
+    1. Run: slak auth login -n my-workspace
+    2. Browser opens, approve access
+    3. Token automatically saved (no clipboard needed)
+
+    ALTERNATIVE: Direct token for CI/non-interactive environments
+    1. Get token from https://api.slack.com/apps
+    2. Run: slak auth login --token xoxb-... -n my-workspace
+    3. Or: SLACK_BOT_TOKEN=xoxb-... slak auth login -n my-workspace
 
     Tokens are stored securely in OS keychain (via keytar).
     Workspace config is saved to ~/.config/slak/config.json.
 
-    For OAuth flow (recommended for new users):
-    1. Create a Slack app at https://api.slack.com/apps
-    2. Copy your Client ID and Client Secret
-    3. Run: slak auth login --oauth --client-id <id> --client-secret <secret>
-    4. Approve in the browser window that opens
+    For OAuth (default), requires either:
+    - SLACK_CLIENT_ID + SLACK_CLIENT_SECRET environment variables, OR
+    - --client-id + --client-secret flags
+
+    Create a Slack app at https://api.slack.com/apps to get these values.
   `
 
   static override examples = [
-    'slak auth login --token xoxb-1234567890-1234567890-ABCDEFGHIJK --workspace-name my-workspace',
-    'slak auth login --oauth --client-id C123ABC --client-secret s3cr3t --workspace-name my-workspace',
-    'SLACK_BOT_TOKEN=xoxb-... slak auth login --workspace-name my-workspace',
-    'slak auth login --token $SLACK_BOT_TOKEN --workspace-name prod',
+    'slak auth login -n my-workspace',
+    'slak auth login -n my-workspace --set-default',
+    'slak auth login --token xoxb-1234567890-1234567890-ABCDEFGHIJK -n my-workspace',
+    'SLACK_BOT_TOKEN=xoxb-... slak auth login -n my-workspace',
+    'SLACK_CLIENT_ID=C123 SLACK_CLIENT_SECRET=s3cr3t slak auth login -n workspace',
   ]
 
   static override enableJsonFlag = true
 
   static override flags = {
-    token: Flags.string({
-      description: 'Bot or user token (xoxb-* or xoxp-*)',
-      env: 'SLACK_BOT_TOKEN',
-      exclusive: ['oauth'],
-    }),
-    oauth: Flags.boolean({
-      description: 'Use browser-based OAuth flow (requires --client-id and --client-secret)',
-      default: false,
-      exclusive: ['token'],
-    }),
-    'client-id': Flags.string({
-      description: 'Slack app Client ID (for OAuth flow)',
-      env: 'SLACK_CLIENT_ID',
-      dependsOn: ['oauth'],
-    }),
-    'client-secret': Flags.string({
-      description: 'Slack app Client Secret (for OAuth flow)',
-      env: 'SLACK_CLIENT_SECRET',
-      dependsOn: ['oauth'],
-    }),
     'workspace-name': Flags.string({
       char: 'n',
       description: 'Friendly name for this workspace (e.g., "my-workspace", "prod")',
       required: true,
+    }),
+    token: Flags.string({
+      description: 'Bot or user token (xoxb-* or xoxp-*) — skip OAuth and use direct auth',
+      env: 'SLACK_BOT_TOKEN',
+    }),
+    'client-id': Flags.string({
+      description: 'Slack app Client ID (for OAuth) — defaults to SLACK_CLIENT_ID env var',
+      env: 'SLACK_CLIENT_ID',
+    }),
+    'client-secret': Flags.string({
+      description: 'Slack app Client Secret (for OAuth) — defaults to SLACK_CLIENT_SECRET env var',
+      env: 'SLACK_CLIENT_SECRET',
     }),
     'set-default': Flags.boolean({
       description: 'Set this workspace as default (auto-enabled if first workspace)',
@@ -83,50 +79,55 @@ export default class AuthLogin extends BaseCommand {
   async run(): Promise<Record<string, unknown>> {
     const {flags} = await this.parse(AuthLogin)
 
-    // Validate inputs
-    const hasToken = flags.token || process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN
-    const hasOAuth = flags.oauth
+    // Determine auth method: token takes priority, else default to OAuth
+    const hasExplicitToken = flags.token || process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN
+    const useToken = hasExplicitToken
 
-    if (!hasToken && !hasOAuth) {
-      throw new SlakError(
-        'No authentication method provided',
-        ExitCode.ValidationError,
-        'missing_auth_method',
-        [
-          'Use --oauth for browser-based authentication (recommended)',
-          'Use --token <token> for direct token authentication',
-          'Set SLACK_BOT_TOKEN or SLACK_USER_TOKEN environment variable',
-        ],
-      )
-    }
-
-    // Handle OAuth flow
+    // Handle token-based flow
     let token = ''
     let teamId = ''
     let userName = ''
     let teamName = ''
 
-    if (hasOAuth) {
-      if (!flags['client-id'] || !flags['client-secret']) {
+    if (useToken) {
+      const foundToken = flags.token || process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN
+      token = foundToken as string
+
+      // Validate token format
+      if (!this.isValidTokenFormat(token)) {
         throw new SlakError(
-          'OAuth requires --client-id and --client-secret',
+          'Invalid token format',
+          ExitCode.ValidationError,
+          'invalid_arg',
+          ['Tokens should start with xoxb- (bot) or xoxp- (user)', 'Example: xoxb-1234567890-1234567890-ABCDEFGH'],
+        )
+      }
+    } else {
+      // Default: OAuth flow
+      const clientId = flags['client-id']
+      const clientSecret = flags['client-secret']
+
+      if (!clientId || !clientSecret) {
+        throw new SlakError(
+          'OAuth requires Client ID and Secret',
           ExitCode.ValidationError,
           'missing_arg',
           [
             'Create a Slack app at https://api.slack.com/apps',
-            'Copy Client ID and Secret to flags or env vars (SLACK_CLIENT_ID, SLACK_CLIENT_SECRET)',
+            'Set SLACK_CLIENT_ID and SLACK_CLIENT_SECRET environment variables,',
+            'Or use --client-id and --client-secret flags',
           ],
         )
       }
 
       if (!this.isInteractive()) {
         throw new SlakError(
-          'OAuth flow requires interactive terminal',
+          'OAuth requires interactive terminal (or use --token for CI)',
           ExitCode.ValidationError,
           'not_interactive',
           [
-            'Use --token for non-interactive authentication',
-            'Or run this command in an interactive terminal for OAuth',
+            'Use --token xoxb-... for non-interactive authentication',
+            'Or run this command in an interactive terminal',
           ],
         )
       }
@@ -134,8 +135,8 @@ export default class AuthLogin extends BaseCommand {
       try {
         progress('Opening browser for Slack OAuth authorization...')
         const oauthToken = await performOAuthFlow({
-          clientId: flags['client-id'],
-          clientSecret: flags['client-secret'],
+          clientId,
+          clientSecret,
           scopes: (flags.scopes || '').split(',').filter(Boolean),
           redirectUri: 'http://localhost:3000/callback',
         })
@@ -149,31 +150,9 @@ export default class AuthLogin extends BaseCommand {
           `OAuth flow failed: ${String(error)}`,
           ExitCode.AuthError,
           'oauth_error',
-          ['Verify client ID and secret are correct', 'Check scopes are enabled in your Slack app'],
+          ['Verify Client ID and Secret are correct', 'Check scopes are enabled in your Slack app'],
         )
       }
-    } else {
-      // Token-based flow (existing behavior)
-      const foundToken = flags.token || process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN
-      if (!foundToken) {
-        throw new SlakError(
-          'No token available',
-          ExitCode.ValidationError,
-          'missing_auth_method',
-          ['Provide --token or set SLACK_BOT_TOKEN environment variable'],
-        )
-      }
-      token = foundToken
-    }
-
-    // Validate token format (skip for OAuth since we already got it securely)
-    if (!hasOAuth && !this.isValidTokenFormat(token)) {
-      throw new SlakError(
-        'Invalid token format',
-        ExitCode.ValidationError,
-        'invalid_arg',
-        ['Tokens should start with xoxb- (bot) or xoxp- (user)', 'Example: xoxb-1234567890-1234567890-ABCDEFGH'],
-      )
     }
 
     // Verify token with auth.test

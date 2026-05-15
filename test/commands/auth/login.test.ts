@@ -142,25 +142,24 @@ describe('auth login', () => {
     })
   })
 
-  describe('with --oauth flag (web-based OAuth flow)', () => {
-    it('requires client-id and client-secret flags', async () => {
+  describe('default (OAuth flow)', () => {
+    it('requires client-id and client-secret for OAuth (default)', async () => {
+      // Default behavior is OAuth, which requires client credentials
       const {exit} = await runCommand([
         'auth',
         'login',
-        '--oauth',
         '--workspace-name',
         'test',
       ])
-      // Should fail because OAuth requires client-id and client-secret
+      // Should fail because OAuth (default) requires client-id and client-secret
       expect(exit).not.toBe(0)
     })
 
-    it('requires interactive terminal (TTY)', async () => {
-      // Non-interactive mode should reject OAuth
+    it('requires interactive terminal (TTY) for OAuth (default)', async () => {
+      // Default OAuth mode requires interactive terminal
       const {exit} = await runCommand([
         'auth',
         'login',
-        '--oauth',
         '--client-id',
         'C123ABC',
         '--client-secret',
@@ -168,7 +167,7 @@ describe('auth login', () => {
         '--workspace-name',
         'test',
       ])
-      // Should fail because OAuth requires interactive terminal
+      // Should fail because OAuth requires interactive terminal (stdin is not TTY in tests)
       expect(exit).not.toBe(0)
     })
   })
