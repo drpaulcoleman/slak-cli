@@ -1,0 +1,146 @@
+{
+  "name": "slak",
+  "version": "0.1.0",
+  "description": "World-class Slack CLI for humans and AI agents — full Slack Web API via oclif",
+  "author": "Anthropic",
+  "license": "MIT",
+  "bin": {
+    "slak": "./bin/run.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepack": "oclif manifest",
+    "postpack": "rm -f oclif.manifest.json",
+    "type-check": "tsc --noEmit",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "lint": "eslint src test",
+    "lint:fix": "eslint src test --fix",
+    "format": "prettier --write src test",
+    "clean": "rm -rf dist bin/run.js oclif.manifest.json"
+  },
+  "dependencies": {
+    "@oclif/core": "^4.1.26",
+    "@oclif/plugin-help": "^6.2.11",
+    "@oclif/plugin-plugins": "^5.2.0",
+    "@slack/web-api": "^7.16.0",
+    "@slack/oauth": "^3.0.5",
+    "@slack/socket-mode": "^2.0.7",
+    "chalk": "^5.3.0",
+    "conf": "^13.0.1",
+    "fastest-levenshtein": "^1.0.16",
+    "inquirer": "^12.1.0",
+    "keytar": "^7.9.0",
+    "mime-types": "^2.1.35",
+    "ora": "^8.1.0",
+    "cli-table3": "^0.6.4"
+  },
+  "devDependencies": {
+    "@oclif/test": "^3.0.0",
+    "@types/inquirer": "^9.0.0",
+    "@types/mime-types": "^2.1.1",
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "@vitest/ui": "^1.0.0",
+    "eslint": "^8.50.0",
+    "eslint-config-oclif": "^6.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "nock": "^13.4.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.2.0",
+    "vitest": "^1.0.0"
+  },
+  "oclif": {
+    "bin": "slak",
+    "dirname": "slak",
+    "commands": {
+      "strategy": "pattern",
+      "target": "./dist/commands",
+      "globPatterns": [
+        "**/*.js",
+        "!**/*.test.js"
+      ]
+    },
+    "helpClass": "./dist/help/index.js",
+    "topicSeparator": " ",
+    "additionalHelpFlags": [
+      "-h"
+    ],
+    "additionalVersionFlags": [
+      "-v"
+    ],
+    "hooks": {
+      "init": "./dist/hooks/init.js",
+      "command_not_found": "./dist/hooks/command-not-found.js",
+      "finally": "./dist/hooks/finally.js"
+    },
+    "plugins": [
+      "@oclif/plugin-help",
+      "@oclif/plugin-plugins"
+    ],
+    "topics": {
+      "auth": {
+        "description": "Authenticate and manage Slack workspace credentials"
+      },
+      "chat": {
+        "description": "Send and manage Slack messages"
+      },
+      "channel": {
+        "description": "List, search, and manage Slack channels and DMs"
+      },
+      "user": {
+        "description": "Look up and manage Slack users and presence"
+      },
+      "file": {
+        "description": "Upload, list, and manage Slack files"
+      },
+      "search": {
+        "description": "Full-text search across messages and files"
+      },
+      "reaction": {
+        "description": "Add and remove emoji reactions to messages"
+      },
+      "pin": {
+        "description": "Pin and unpin items in channels"
+      },
+      "bookmark": {
+        "description": "Manage channel bookmarks"
+      },
+      "canvas": {
+        "description": "Read and manage Slack Canvas documents"
+      },
+      "reminder": {
+        "description": "Create and manage personal reminders"
+      },
+      "dnd": {
+        "description": "Manage Do Not Disturb / snooze status"
+      },
+      "emoji": {
+        "description": "List custom workspace emoji"
+      },
+      "team": {
+        "description": "Get workspace info and audit logs"
+      },
+      "usergroup": {
+        "description": "Manage user groups"
+      },
+      "admin": {
+        "description": "Workspace admin operations (requires admin scopes)"
+      },
+      "event": {
+        "description": "Listen to real-time Slack events via Socket Mode"
+      },
+      "api": {
+        "description": "Call any Slack API method directly (escape hatch)"
+      }
+    }
+  }
+}
