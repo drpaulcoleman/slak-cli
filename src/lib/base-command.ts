@@ -1,5 +1,7 @@
 import {Command, Flags} from '@oclif/core'
 import {SlakClient} from './client.js'
+import {SlakError, ExitCode} from './errors.js'
+import {getWorkspaceManager} from './workspaces.js'
 
 /**
  * Base command class for all slak commands.
@@ -72,12 +74,48 @@ export abstract class BaseCommand extends Command {
   /**
    * Get the Slack client for the current workspace.
    * Resolves workspace from --workspace flag, env var, or default.
-   * Throws if no workspace is configured.
+   * Throws if no workspace is configured or token unavailable.
    */
-  protected get slakClient(): Promise<SlakClient> {
-    // This is a placeholder; full implementation in client.ts
-    // Will be called as: const client = await this.slakClient
-    return Promise.resolve({} as SlakClient)
+  protected async getSlakClient(): Promise<SlakClient> {
+    const manager = getWorkspaceManager()
+    const wsName = process.env.SLAK_WORKSPACE || undefined
+    const ws = manager.getWorkspace(wsName)
+    if (!ws) {
+      throw new SlakError(
+        'No workspace configured',
+        ExitCode.AuthError,
+        'no_workspace',
+        ['Run "slak auth login" to configure a workspace']
+      )
+    }
+
+    // Get token from environment variable if set, otherwise from keytar
+    let token: string | null = process.env.SLACK_BOT_TOKEN || process.env.SLACK_USER_TOKEN || null
+    if (!token) {
+      try {
+        const keytar = await import('keytar')
+        token = await keytar.getPassword('slak', ws.tokenLabel)
+      } catch {
+        // Keytar not available, token must be in env var
+        throw new SlakError(
+          'Token not found',
+          ExitCode.AuthError,
+          'no_token',
+          [`Set SLACK_BOT_TOKEN environment variable`, `Or re-authenticate with "slak auth login"`]
+        )
+      }
+    }
+
+    if (!token) {
+      throw new SlakError(
+        'Token not found',
+        ExitCode.AuthError,
+        'no_token',
+        [`Set SLACK_BOT_TOKEN environment variable`, `Or re-authenticate with "slak auth login"`]
+      )
+    }
+
+    return new SlakClient(token, ws.id)
   }
 
   /**
