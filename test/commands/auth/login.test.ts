@@ -142,11 +142,33 @@ describe('auth login', () => {
     })
   })
 
-  describe('with --browser flag (OAuth flow)', () => {
-    it('skips browser flow when stdin is not TTY', async () => {
-      // Non-interactive mode should require --token or env var
-      const {exit} = await runCommand(['auth', 'login', '--browser'])
-      // Should fail because browser mode requires interactive TTY
+  describe('with --oauth flag (web-based OAuth flow)', () => {
+    it('requires client-id and client-secret flags', async () => {
+      const {exit} = await runCommand([
+        'auth',
+        'login',
+        '--oauth',
+        '--workspace-name',
+        'test',
+      ])
+      // Should fail because OAuth requires client-id and client-secret
+      expect(exit).not.toBe(0)
+    })
+
+    it('requires interactive terminal (TTY)', async () => {
+      // Non-interactive mode should reject OAuth
+      const {exit} = await runCommand([
+        'auth',
+        'login',
+        '--oauth',
+        '--client-id',
+        'C123ABC',
+        '--client-secret',
+        's3cr3t',
+        '--workspace-name',
+        'test',
+      ])
+      // Should fail because OAuth requires interactive terminal
       expect(exit).not.toBe(0)
     })
   })

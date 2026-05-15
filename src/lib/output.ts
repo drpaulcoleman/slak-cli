@@ -46,9 +46,13 @@ export function printTable(
  * Output progress/status message to stderr (never stdout).
  * Shows spinner when running interactively; silent otherwise.
  */
-export function progress(): void {
+export function progress(message?: string): void {
   if (isJsonMode() || isQuiet()) {
     return
+  }
+
+  if (message) {
+    logToStderr(message)
   }
 
   if (isInteractive()) {

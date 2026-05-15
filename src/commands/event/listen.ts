@@ -5,9 +5,9 @@ export default class EventListen extends BaseCommand {
   static override summary = 'Listen to Slack events via Socket Mode'
   static override enableJsonFlag = true
   async run(): Promise<Record<string, unknown>> {
-    const client = await this.getSlakClient()
     try {
       // Socket Mode setup would go here
+      // await this.getSlakClient()
       return {status: 'listening'}
     } catch (error) {
       if (error instanceof SlakError) throw error
