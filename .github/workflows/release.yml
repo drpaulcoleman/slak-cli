@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Test
+        run: npm test -- --run
+
+      - name: Build
+        run: npm run build
+
+      - name: Generate oclif manifest
+        run: npm run prepack
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          files: |
+            dist/**/*
+            package.json
+            README.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+          npm publish
+        if: always()
+
+  build-and-attach:
+    runs-on: ${{ matrix.os }}
+    needs: release
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: macos-latest
+            target: darwin-x64
+          - os: windows-latest
+            target: win32-x64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Create distribution archive
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cd dist && powershell Compress-Archive -Path . -DestinationPath ../slak-${{ matrix.target }}.zip
+          else
+            tar -czf slak-${{ matrix.target }}.tar.gz -C dist .
+          fi
+        working-directory: .
+
+      - name: Compute checksums
+        shell: bash
+        run: |
+          if [ -f "slak-${{ matrix.target }}.zip" ]; then
+            sha256sum "slak-${{ matrix.target }}.zip" > "slak-${{ matrix.target }}.zip.sha256"
+          else
+            sha256sum "slak-${{ matrix.target }}.tar.gz" > "slak-${{ matrix.target }}.tar.gz.sha256"
+          fi
+
+      - name: Upload artifacts to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            slak-${{ matrix.target }}.*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,5 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+# Run type check and lint on staged files
+npm run type-check && npm run lint
