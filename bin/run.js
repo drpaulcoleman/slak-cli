@@ -2,4 +2,7 @@
 
 import {execute} from '@oclif/core'
 
-execute({dir: import.meta.url}).catch(require('pretty-error').start)
+execute({dir: import.meta.url}).catch((error) => {
+  console.error(error)
+  process.exit(1)
+})

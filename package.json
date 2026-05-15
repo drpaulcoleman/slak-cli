@@ -70,7 +70,6 @@
         "!**/*.test.js"
       ]
     },
-    "helpClass": "./dist/help/index.js",
     "topicSeparator": " ",
     "additionalHelpFlags": [
       "-h"
